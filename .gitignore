@@ -1,0 +1,23 @@
+# Secrets — NEVER commit real keys
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node
+node_modules/
+.next/
+
+# Output files
+outputs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
