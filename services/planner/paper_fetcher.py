@@ -13,7 +13,7 @@ RECOMMENDATIONS_API = "https://api.semanticscholar.org/recommendations/v1"
 HEADERS = {}
 
 # Research paper fields
-PAPER_FIELDS = "paperId,title,abstract,year,authors,externalIds"
+PAPER_FIELDS = "paperId,title,abstract,year,authors,externalIds,openAccessPdf"
 
 def extract_arxiv_id(url: str) -> Optional[str]:
     """
@@ -82,11 +82,12 @@ def fetch_paper_metadata(arxiv_url: str) -> Optional[dict]:
     
     result = {
         "paper_id": data.get("paperId", ""),
-        "title":    data.get("title", "Unknown Title"),
+        "title": data.get("title", "Unknown Title"),
         "abstract": data.get("abstract", ""),
         "arxiv_id": arxiv_id,
-        "year":     data.get("year"),
-        "authors":  [a["name"] for a in data.get("authors", [])]
+        "year": data.get("year"),
+        "pdf_url":  data.get("openAccessPdf", {}).get("url") if data.get("openAccessPdf") else f"https://arxiv.org/pdf/{arxiv_id}",
+        "authors": [a["name"] for a in data.get("authors", [])]
     }
 
     logger.info(f"Fetched: '{result['title']}' ({result['year']})")
@@ -123,13 +124,20 @@ def _parse_papers(raw_papers: list, limit: int) -> list[dict]:
 
         arxiv_id = p.get("externalIds", {}).get("ArXiv")
 
+        pdf_url = (
+            p.get("openAccessPdf", {}).get("url")
+            if p.get("openAccessPdf")
+            else (f"https://arxiv.org/pdf/{arxiv_id}" if arxiv_id else None)
+        )
+
         papers.append({
-            "paper_id":  p.get("paperId", ""),
-            "title":     p.get("title", "Unknown Title"),
-            "abstract":  p.get("abstract", ""),
-            "year":      p.get("year"),
+            "paper_id": p.get("paperId", ""),
+            "title": p.get("title", "Unknown Title"),
+            "abstract": p.get("abstract", ""),
+            "year": p.get("year"),
             "arxiv_url": f"https://arxiv.org/abs/{arxiv_id}" if arxiv_id else None,
-            "authors":   [a["name"] for a in p.get("authors", [])]
+            "pdf_url": pdf_url,
+            "authors": [a["name"] for a in p.get("authors", [])]
         })
 
         if len(papers) >= limit:
