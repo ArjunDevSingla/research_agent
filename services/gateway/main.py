@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 # Redis
 REDIS_URL = os.getenv("REDDIS_URL", "redis://redis:6379")
 QUEUE_PLANNER = "planner_jobs"
+QUEUE_SEARCH = "search_jobs"
 QUEUE_EVENTS  = "ws_events"
 
 def get_redis():
@@ -31,6 +32,15 @@ def get_redis():
 active_connections: dict[str, list[WebSocket]] = {}
 
 # Schemas
+class SearchRequest(BaseModel):
+    query: str
+    locale: str = "en" 
+
+class ConfirmRequest(BaseModel):
+    job_id: str
+    arxiv_url: str
+    target_locale: str = "en"
+    max_papers: int = 8
 
 class AnalyzeRequest(BaseModel):
     arxiv_url: str
@@ -112,52 +122,124 @@ def health():
         "timestamp": datetime.utcnow().isoformat()
     }
 
-@app.post("/analyze", response_model=AnalyzeResponse)
-def analyze(req: AnalyzeRequest):
-    if "arxiv.org" not in req.arxiv_url:
-        return AnalyzeResponse(
-            job_id="",
-            status="error",
-            ws_url="",
-            message="Please provide a valid arxiv URL e.g. https://arxiv.org/abs/1706.03762"
-        )
-    
+@app.post("/search")
+def search(req: SearchRequest):
     job_id = str(uuid.uuid4())[:8]
 
-    job = {
-        "job_id":        job_id,
-        "arxiv_url":     req.arxiv_url,
-        "target_locale": req.target_locale,
-        "max_papers":    req.max_papers,
-        "created_at":    datetime.utcnow().isoformat()
+    search_job = {
+        "job_id":  job_id,
+        "query":   req.query,
+        "locale":  req.locale,
+        "created_at": datetime.utcnow().isoformat()
     }
 
     try:
         r = get_redis()
-        r.rpush(QUEUE_PLANNER, json.dumps(job))
-        logger.info(f"Job {job_id} queued — {req.arxiv_url} locale={req.target_locale}")
+        r.rpush(QUEUE_SEARCH, json.dumps(search_job))
+        logger.info(f"Search job {job_id} queued — query: '{req.query}' locale={req.locale}")
     except Exception as e:
         logger.error(f"Redis push failed: {e}")
-        return AnalyzeResponse(
-            job_id="",
-            status="error",
-            ws_url="",
-            message="Could not connect to queue. Is Redis running?"
-        )
-    
-    r.rpush(QUEUE_EVENTS, json.dumps({
-        "event":     "job_started",
-        "job_id":    job_id,
-        "payload":   {"arxiv_url": req.arxiv_url, "locale": req.target_locale},
-        "timestamp": datetime.utcnow().isoformat()
-    }))
+        return {
+            "job_id":  "",
+            "status":  "error",
+            "message": "Could not connect to queue. Is Redis running?"
+        }
 
-    return AnalyzeResponse(
-        job_id=job_id,
-        status="queued",
-        ws_url=f"/ws/{job_id}",
-        message="Job queued. Connect to WebSocket for live updates."
-    )
+    return {
+        "job_id":  job_id,
+        "status":  "searching",
+        "ws_url":  f"/ws/{job_id}",
+        "message": "Search started. Connect to WebSocket for results."
+    }
+
+@app.post("/confirm")
+def confirm(req: ConfirmRequest):
+    try:
+        r = get_redis()
+
+        planner_job = {
+            "job_id": req.job_id,
+            "arxiv_url": req.arxiv_url,
+            "target_locale": req.target_locale,
+            "max_papers": req.max_papers,
+            "created_at": datetime.utcnow().isoformat()
+        }
+
+        r.rpush(QUEUE_PLANNER, json.dumps(planner_job))
+
+        r.rpush(QUEUE_EVENTS, json.dumps({
+            "event": "job_started",
+            "job_id": req.job_id,
+            "payload": {
+                "arxiv_url": req.arxiv_url,
+                "locale": req.target_locale
+            },
+            "timestamp": datetime.utcnow().isoformat()
+        }))
+
+        logger.info(f"Job {req.job_id} confirmed — starting analysis: {req.arxiv_url}")
+
+    except Exception as e:
+        logger.error(f"Confirm failed: {e}")
+        return {"status": "error", "message": str(e)}
+
+    return {
+        "job_id": req.job_id,
+        "status": "analyzing",
+        "message": "Analysis started."
+    }
+
+@app.post("/analyze")
+def analyze(req: AnalyzeRequest):
+    if "arxiv.org" not in req.arxiv_url:
+        return {
+            "job_id":  "",
+            "status":  "error",
+            "ws_url":  "",
+            "message": "Please provide a valid arxiv URL e.g. https://arxiv.org/abs/1706.03762"
+        }
+    
+    job_id = str(uuid.uuid4())[:8]
+
+    try:
+        r = get_redis()
+        planner_job = {
+            "job_id":        job_id,
+            "arxiv_url":     req.arxiv_url,
+            "target_locale": req.target_locale,
+            "max_papers":    req.max_papers,
+            "created_at":    datetime.utcnow().isoformat()
+        }
+
+        r.rpush(QUEUE_PLANNER, json.dumps(planner_job))
+
+        r.rpush(QUEUE_EVENTS, json.dumps({
+            "event": "job_started",
+            "job_id": job_id,
+            "payload": {
+                "arxiv_url": req.arxiv_url,
+                "locale": req.target_locale
+            },
+            "timestamp": datetime.utcnow().isoformat()
+        }))
+
+        logger.info(f"Job {job_id} queued — {req.arxiv_url} locale={req.target_locale}")
+
+    except Exception as e:
+        logger.error(f"Redis push failed: {e}")
+        return {
+            "job_id":  "",
+            "status":  "error",
+            "ws_url":  "",
+            "message": "Could not connect to queue. Is Redis running?"
+        }
+    
+    return {
+        "job_id":  job_id,
+        "status":  "queued",
+        "ws_url":  f"/ws/{job_id}",
+        "message": "Job queued. Connect to WebSocket for live updates."
+    }
 
 @app.websocket("/ws/{job_id}")
 async def websocket_endpoint(websocket: WebSocket, job_id: str):
@@ -170,9 +252,9 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
     logger.info(f"WS connected — job {job_id} ({len(active_connections[job_id])} client(s))")
 
     await websocket.send_text(json.dumps({
-        "event":     "connected",
-        "job_id":    job_id,
-        "message":   "Connected. Waiting for agent updates...",
+        "event": "connected",
+        "job_id": job_id,
+        "message": "Connected. Waiting for agent updates...",
         "timestamp": datetime.utcnow().isoformat()
     }))
 
@@ -181,7 +263,7 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
             # Keep alive — events arrive via broadcast() from poller thread
             await asyncio.sleep(30)
             await websocket.send_text(json.dumps({
-                "event":  "ping",
+                "event": "ping",
                 "job_id": job_id
             }))
     except WebSocketDisconnect:
