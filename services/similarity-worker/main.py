@@ -53,7 +53,7 @@ def _call_groq(system_prompt: str, user_prompt: str) -> str:
             {"role": "user",   "content": user_prompt}
         ],
         "max_tokens":  800,
-        "temperature": 0.2    # low temperature = consistent structured output
+        "temperature": 0.2
     }
     with httpx.Client(timeout=60) as client:
         resp = client.post(
@@ -63,7 +63,7 @@ def _call_groq(system_prompt: str, user_prompt: str) -> str:
         )
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"].strip()
-    
+
 def _call_ollama(system_prompt: str, user_prompt: str) -> str:
     body = {
         "model":   OLLAMA_MODEL,
@@ -73,11 +73,16 @@ def _call_ollama(system_prompt: str, user_prompt: str) -> str:
         ],
         "stream": False
     }
+    # localtunnel blocks requests without this header — returns 403 otherwise
+    headers = {
+        "bypass-tunnel-reminder": os.getenv("OLLAMA_TUNNEL_PASSWORD", ""),
+        "Content-Type": "application/json"
+    }
     with httpx.Client(timeout=120) as client:
-        resp = client.post(f"{OLLAMA_URL}/api/chat", json=body)
+        resp = client.post(f"{OLLAMA_URL}/api/chat", headers=headers, json=body)
         resp.raise_for_status()
         return resp.json()["message"]["content"].strip()
-    
+
 # Parsing LLM output
 
 def parse_llm_output(raw: str, job: dict) -> dict:
@@ -94,7 +99,6 @@ def parse_llm_output(raw: str, job: dict) -> dict:
         score = float(data.get("similarity_score", 0.5))
         score = max(0.0, min(1.0, score))
 
-        # Validate similarity types
         valid_types = {"methodology", "results", "problem", "dataset", "theory"}
         raw_types   = data.get("similarity_type", ["methodology"])
         sim_types   = [t for t in raw_types if t in valid_types]
@@ -115,8 +119,6 @@ def parse_llm_output(raw: str, job: dict) -> dict:
 
     except (json.JSONDecodeError, KeyError, ValueError) as e:
         logger.warning(f"LLM output parse failed: {e} — using fallback result")
-
-        # Fallback — keep the worker alive even if LLM returns garbage
         return {
             "job_id":           job["job_id"],
             "seed_title":       job["seed_title"],
@@ -128,7 +130,7 @@ def parse_llm_output(raw: str, job: dict) -> dict:
             "key_connections":  [],
             "locale":           job.get("target_locale", "en")
         }
-    
+
 def push_event(r, event: str, job_id: str, payload: dict = {}) -> None:
     r.rpush(QUEUE_EVENTS, json.dumps({
         "event":     event,
@@ -185,14 +187,14 @@ def process_job(job: dict, r) -> None:
     completed, total = increment_tracker(r, job_id)
 
     push_event(r, "worker_complete", job_id, {
-        "worker_type": "similarity",
-        "paper_title": target_title,
+        "worker_type":      "similarity",
+        "paper_title":      target_title,
         "similarity_score": result["similarity_score"],
-        "similarity_type": result["similarity_type"],
-        "explanation": result["explanation"],
-        "key_connections": result["key_connections"],
-        "completed": completed,
-        "total": total
+        "similarity_type":  result["similarity_type"],
+        "explanation":      result["explanation"],
+        "key_connections":  result["key_connections"],
+        "completed":        completed,
+        "total":            total
     })
 
     logger.info(f"Job {job_id} — similarity workers: {completed}/{total} done")

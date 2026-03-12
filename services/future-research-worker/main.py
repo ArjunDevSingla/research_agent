@@ -76,8 +76,14 @@ def _call_ollama(system_prompt: str, user_prompt: str) -> str:
         ],
         "stream": False
     }
+    
+    headers = {
+        "bypass-tunnel-reminder": os.getenv("OLLAMA_TUNNEL_PASSWORD", ""),
+        "Content-Type": "application/json"
+    }
+
     with httpx.Client(timeout=180) as client:
-        resp = client.post(f"{OLLAMA_URL}/api/chat", json=body)
+        resp = client.post(f"{OLLAMA_URL}/api/chat", headers=headers, json=body)
         resp.raise_for_status()
         return resp.json()["message"]["content"].strip()
 
