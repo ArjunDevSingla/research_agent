@@ -79,24 +79,26 @@ def fetch_paper_metadata(arxiv_url: str) -> Optional[dict]:
     if not data:
         logger.error(f"No data returned for arxiv:{arxiv_id}")
         return None
-    
+
     result = {
         "paper_id": data.get("paperId", ""),
-        "title": data.get("title", "Unknown Title"),
+        "title":    data.get("title", "Unknown Title"),
         "abstract": data.get("abstract", ""),
         "arxiv_id": arxiv_id,
-        "year": data.get("year"),
-        "pdf_url":  data.get("openAccessPdf", {}).get("url") if data.get("openAccessPdf") else f"https://arxiv.org/pdf/{arxiv_id}",
-        "authors": [a["name"] for a in data.get("authors", [])]
+        "year":     data.get("year"),
+        "pdf_url":  (
+            data.get("openAccessPdf", {}).get("url")
+            or f"https://arxiv.org/pdf/{arxiv_id}"
+        ),
+        "authors":  [a["name"] for a in data.get("authors", [])]
     }
 
     logger.info(f"Fetched: '{result['title']}' ({result['year']})")
-
     time.sleep(1)
-
     return result
 
-def fetch_similar_papers(paper_id: str, limit:int = 8) -> list[dict]:
+
+def fetch_similar_papers(paper_id: str, limit: int = 8) -> list[dict]:
     logger.info(f"Fetching similar papers for paper_id: {paper_id}")
 
     url  = f"{RECOMMENDATIONS_API}/papers/forpaper/{paper_id}"
@@ -110,8 +112,8 @@ def fetch_similar_papers(paper_id: str, limit:int = 8) -> list[dict]:
         if papers:
             logger.info(f"Got {len(papers)} recommendations")
             return papers
-        
-    logger.warning("Recommendations not available — falling back to citations")
+
+    logger.warning("Recommendations not available — falling back to citations + references")
     time.sleep(1)
     return _fetch_via_citations(paper_id, limit)
 
@@ -131,13 +133,13 @@ def _parse_papers(raw_papers: list, limit: int) -> list[dict]:
         )
 
         papers.append({
-            "paper_id": p.get("paperId", ""),
-            "title": p.get("title", "Unknown Title"),
-            "abstract": p.get("abstract", ""),
-            "year": p.get("year"),
+            "paper_id":  p.get("paperId", ""),
+            "title":     p.get("title", "Unknown Title"),
+            "abstract":  p.get("abstract", ""),
+            "year":      p.get("year"),
             "arxiv_url": f"https://arxiv.org/abs/{arxiv_id}" if arxiv_id else None,
-            "pdf_url": pdf_url,
-            "authors": [a["name"] for a in p.get("authors", [])]
+            "pdf_url":   pdf_url,
+            "authors":   [a["name"] for a in p.get("authors", [])]
         })
 
         if len(papers) >= limit:
@@ -145,21 +147,38 @@ def _parse_papers(raw_papers: list, limit: int) -> list[dict]:
 
     return papers
 
+
 def _fetch_via_citations(paper_id: str, limit: int) -> list[dict]:
+    combined = {}
+
     url  = f"{GRAPH_API}/paper/{paper_id}/citations"
     data = safe_get(url, params={
         "fields": PAPER_FIELDS,
         "limit":  limit * 2
     })
 
-    if not data:
-        logger.error("Citations fallback also failed — returning empty list")
-        return []
-    
-    raw_papers = [
-        item.get("citingPaper", {}) for item in data.get("data", [])
-    ]
+    if data:
+        raw = [item.get("citingPaper", {}) for item in data.get("data", [])]
+        for p in _parse_papers(raw, limit):
+            combined[p["paper_id"]] = p
 
-    papers = _parse_papers(raw_papers, limit)
-    logger.info(f"Got {len(papers)} papers via citations fallback")
+    logger.info(f"Citations strategy: {len(combined)} papers with abstracts")
+
+    # Strategy 2 — references (fill up if citations weren't enough)
+    if len(combined) < limit:
+        time.sleep(1)
+        url  = f"{GRAPH_API}/paper/{paper_id}/references"
+        data = safe_get(url, params={
+            "fields": PAPER_FIELDS,
+            "limit":  limit * 2
+        })
+
+        if data:
+            raw = [item.get("citedPaper", {}) for item in data.get("data", [])]
+            for p in _parse_papers(raw, limit):
+                if p["paper_id"] not in combined:
+                    combined[p["paper_id"]] = p
+
+    papers = list(combined.values())[:limit]
+    logger.info(f"Got {len(papers)} papers via citations+references fallback")
     return papers
