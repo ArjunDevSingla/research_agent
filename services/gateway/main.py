@@ -1,5 +1,6 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import os
 import asyncio
 import json
@@ -12,45 +13,46 @@ from datetime import datetime
 import redis
 from pydantic import BaseModel
 
-# Logging
+# ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [GATEWAY] %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
-# Redis
-REDIS_URL = os.getenv("REDDIS_URL", "redis://redis:6379")
+# ── Redis ──────────────────────────────────────────────────────────────────────
+REDIS_URL     = os.getenv("REDIS_URL", "redis://redis:6379")   # fixed typo REDDIS → REDIS
 QUEUE_PLANNER = "planner_jobs"
-QUEUE_SEARCH = "search_jobs"
+QUEUE_SEARCH  = "search_jobs"
 QUEUE_EVENTS  = "ws_events"
 
 def get_redis():
     return redis.from_url(REDIS_URL, decode_responses=True)
 
-# Web socket connection store
+# ── WebSocket connection store ─────────────────────────────────────────────────
 active_connections: dict[str, list[WebSocket]] = {}
 
-# Schemas
+# ── Schemas ───────────────────────────────────────────────────────────────────
 class SearchRequest(BaseModel):
-    query: str
-    locale: str = "en" 
+    query:  str
+    locale: str = "en"
 
 class ConfirmRequest(BaseModel):
-    job_id: str
-    arxiv_url: str
+    job_id:        str
+    arxiv_url:     str
     target_locale: str = "en"
-    max_papers: int = 8
+    max_papers:    int = 8
 
 class AnalyzeRequest(BaseModel):
-    arxiv_url: str
+    arxiv_url:     str = ""
+    arxiv_id:      str = ""
     target_locale: str = "en"
-    max_papers: int = 8
+    max_papers:    int = 8
 
 class AnalyzeResponse(BaseModel):
-    job_id: str
-    status: str
-    ws_url: str
+    job_id:  str
+    status:  str
+    ws_url:  str
     message: str
 
 
@@ -71,7 +73,7 @@ async def broadcast(job_id: str, event: dict) -> None:
 
 
 def start_event_poller():
-    r = get_redis()
+    r    = get_redis()
     loop = asyncio.new_event_loop()
     logger.info("Event poller thread started")
 
@@ -79,9 +81,9 @@ def start_event_poller():
         try:
             result = r.blpop(QUEUE_EVENTS, timeout=2)
             if result:
-                _, raw = result
-                event = json.loads(raw)
-                job_id = event.get(job_id, "")
+                _, raw  = result
+                event   = json.loads(raw)
+                job_id  = event.get("job_id", "")
                 if job_id:
                     loop.run_until_complete(broadcast(job_id, event))
         except Exception as e:
@@ -92,7 +94,7 @@ def start_event_poller():
 async def lifespan(app: FastAPI):
     poller = threading.Thread(target=start_event_poller, daemon=True)
     poller.start()
-    logger.info("Gateway Started")
+    logger.info("Gateway started")
     yield
     logger.info("Gateway shutting down")
 
@@ -116,9 +118,9 @@ def health():
         redis_status = "unreachable"
 
     return {
-        "status": "ok",
-        "service": "gateway",
-        "redis": redis_status,
+        "status":    "ok",
+        "service":   "gateway",
+        "redis":     redis_status,
         "timestamp": datetime.utcnow().isoformat()
     }
 
@@ -127,9 +129,9 @@ def search(req: SearchRequest):
     job_id = str(uuid.uuid4())[:8]
 
     search_job = {
-        "job_id":  job_id,
-        "query":   req.query,
-        "locale":  req.locale,
+        "job_id":     job_id,
+        "query":      req.query,
+        "locale":     req.locale,
         "created_at": datetime.utcnow().isoformat()
     }
 
@@ -158,21 +160,21 @@ def confirm(req: ConfirmRequest):
         r = get_redis()
 
         planner_job = {
-            "job_id": req.job_id,
-            "arxiv_url": req.arxiv_url,
+            "job_id":        req.job_id,
+            "arxiv_url":     req.arxiv_url,
             "target_locale": req.target_locale,
-            "max_papers": req.max_papers,
-            "created_at": datetime.utcnow().isoformat()
+            "max_papers":    req.max_papers,
+            "created_at":    datetime.utcnow().isoformat()
         }
 
         r.rpush(QUEUE_PLANNER, json.dumps(planner_job))
 
         r.rpush(QUEUE_EVENTS, json.dumps({
-            "event": "job_started",
-            "job_id": req.job_id,
+            "event":   "job_started",
+            "job_id":  req.job_id,
             "payload": {
                 "arxiv_url": req.arxiv_url,
-                "locale": req.target_locale
+                "locale":    req.target_locale
             },
             "timestamp": datetime.utcnow().isoformat()
         }))
@@ -184,21 +186,24 @@ def confirm(req: ConfirmRequest):
         return {"status": "error", "message": str(e)}
 
     return {
-        "job_id": req.job_id,
-        "status": "analyzing",
+        "job_id":  req.job_id,
+        "status":  "analyzing",
         "message": "Analysis started."
     }
 
 @app.post("/analyze")
 def analyze(req: AnalyzeRequest):
-    if "arxiv.org" not in req.arxiv_url:
+    if not req.arxiv_url and req.arxiv_id:
+        req.arxiv_url = f"https://arxiv.org/abs/{req.arxiv_id.strip()}"
+
+    if not req.arxiv_url or "arxiv.org" not in req.arxiv_url:
         return {
             "job_id":  "",
             "status":  "error",
             "ws_url":  "",
-            "message": "Please provide a valid arxiv URL e.g. https://arxiv.org/abs/1706.03762"
+            "message": "Please provide a valid arxiv URL or ID e.g. 1706.03762"
         }
-    
+
     job_id = str(uuid.uuid4())[:8]
 
     try:
@@ -214,11 +219,11 @@ def analyze(req: AnalyzeRequest):
         r.rpush(QUEUE_PLANNER, json.dumps(planner_job))
 
         r.rpush(QUEUE_EVENTS, json.dumps({
-            "event": "job_started",
-            "job_id": job_id,
+            "event":   "job_started",
+            "job_id":  job_id,
             "payload": {
                 "arxiv_url": req.arxiv_url,
-                "locale": req.target_locale
+                "locale":    req.target_locale
             },
             "timestamp": datetime.utcnow().isoformat()
         }))
@@ -233,12 +238,55 @@ def analyze(req: AnalyzeRequest):
             "ws_url":  "",
             "message": "Could not connect to queue. Is Redis running?"
         }
-    
+
     return {
         "job_id":  job_id,
         "status":  "queued",
         "ws_url":  f"/ws/{job_id}",
         "message": "Job queued. Connect to WebSocket for live updates."
+    }
+
+
+@app.get("/graph/{job_id}")
+def get_graph(job_id: str):
+    r = get_redis()
+
+    raw = r.get(f"translated_graph:{job_id}")
+    if not raw:
+        raw = r.get(f"graph:{job_id}")
+
+    if not raw:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Graph not found for job {job_id}. Job may still be running."
+        )
+
+    return JSONResponse(content=json.loads(raw))
+
+
+@app.get("/status/{job_id}")
+def get_status(job_id: str):
+    r = get_redis()
+
+    def read_tracker(worker_type: str) -> dict:
+        raw = r.get(f"tracker:{job_id}:{worker_type}")
+        if not raw:
+            return {"completed": 0, "total": 0}
+        return json.loads(raw)
+
+    sim = read_tracker("similarity")
+    fut = read_tracker("future_research")
+
+    graph_ready = bool(r.exists(f"graph:{job_id}"))
+    translated  = bool(r.exists(f"translated_graph:{job_id}"))
+
+    return {
+        "job_id":            job_id,
+        "similarity":        sim,
+        "future_research":   fut,
+        "graph_ready":       graph_ready,
+        "translated":        translated,
+        "complete":          graph_ready,
     }
 
 @app.websocket("/ws/{job_id}")
@@ -252,9 +300,9 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
     logger.info(f"WS connected — job {job_id} ({len(active_connections[job_id])} client(s))")
 
     await websocket.send_text(json.dumps({
-        "event": "connected",
-        "job_id": job_id,
-        "message": "Connected. Waiting for agent updates...",
+        "event":     "connected",
+        "job_id":    job_id,
+        "message":   "Connected. Waiting for agent updates...",
         "timestamp": datetime.utcnow().isoformat()
     }))
 
@@ -263,7 +311,7 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
             # Keep alive — events arrive via broadcast() from poller thread
             await asyncio.sleep(30)
             await websocket.send_text(json.dumps({
-                "event": "ping",
+                "event":  "ping",
                 "job_id": job_id
             }))
     except WebSocketDisconnect:
