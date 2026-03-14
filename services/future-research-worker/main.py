@@ -54,7 +54,7 @@ def _call_groq(system_prompt: str, user_prompt: str) -> str:
             {"role": "system", "content": system_prompt},
             {"role": "user",   "content": user_prompt}
         ],
-        "max_tokens":  2000,
+        "max_tokens":  4000,
         "temperature": 0.3
     }
     with httpx.Client(timeout=60) as client:
@@ -76,12 +76,10 @@ def _call_ollama(system_prompt: str, user_prompt: str) -> str:
         ],
         "stream": False
     }
-    
     headers = {
         "bypass-tunnel-reminder": os.getenv("OLLAMA_TUNNEL_PASSWORD", ""),
         "Content-Type": "application/json"
     }
-
     with httpx.Client(timeout=180) as client:
         resp = client.post(f"{OLLAMA_URL}/api/chat", headers=headers, json=body)
         resp.raise_for_status()
@@ -224,6 +222,15 @@ def process_job(job: dict, r) -> None:
     r.expire(key, 3600)
 
     completed, total = increment_tracker(r, job_id)
+
+    for gap in results:
+        push_event(r, "gap_found", job_id, {
+            "gap_title":    gap["gap_title"],
+            "status":       gap["status"],
+            "confidence":   gap["confidence"],
+            "compared_with": gap.get("compared_with", ""),
+            "source_paper": gap.get("compared_with", "") or job.get("seed_title", ""),
+        })
 
     push_event(r, "worker_complete", job_id, {
         "worker_type":      "future_research",

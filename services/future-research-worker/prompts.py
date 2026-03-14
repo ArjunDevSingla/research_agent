@@ -44,8 +44,10 @@ Return exactly this schema:
 
 Status definitions:
 - "open"             → none of the related papers address this gap at all
-- "partially_solved" → at least one related paper makes progress but key aspects remain
-- "solved"           → at least one related paper directly and fully addresses this gap
+- "partially_solved" → at least one related paper makes meaningful progress but aspects remain open
+- "solved"           → at least one related paper DIRECTLY and COMPLETELY addresses this gap
+
+IMPORTANT: Be generous with "partially_solved" and "solved" — if a related paper improves on a gap even partially, mark it. Do NOT mark everything as "open".
 
 Confidence guide:
 - 0.9-1.0 → gap explicitly stated in conclusion or limitations section
@@ -82,14 +84,14 @@ def build_user_prompt(
     for key, label in section_labels.items():
         content = seed_sections.get(key, "").strip()
         if content:
-            sections_text += f"\n[{label}]\n{content}\n"
+            sections_text += f"\n[{label}]\n{content[:2000]}\n"
 
     if not sections_text.strip():
         sections_text = f"\n[Abstract]\n{seed_abstract}\n"
         sections_text += "\nNote: Full PDF sections unavailable. Use abstract for Task 1."
 
     related_text = ""
-    for i, p in enumerate(related_papers):
+    for i, p in enumerate(related_papers[:6]):   # cap at 6 for context window
         related_text += (
             f"\nRelated Paper {i+1}:\n"
             f"Title: {p['title']}\n"
