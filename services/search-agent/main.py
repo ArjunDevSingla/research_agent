@@ -91,7 +91,7 @@ def push_event(r, event: str, job_id: str, payload: dict = {}) -> None:
     }))
 
 def make_lingo():
-    return LingoDotDevEngine(api_key=LINGO_KEY) if LINGO_KEY else None
+    return LingoDotDevEngine({"api_key": LINGO_KEY}) if LINGO_KEY else None
 
 async def detect_language(engine, text: str) -> str:
     if not engine:
