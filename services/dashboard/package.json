@@ -1,0 +1,26 @@
+{
+  "name": "paperswarm-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start -p 3000"
+  },
+  "dependencies": {
+    "next": "14.2.3",
+    "react": "^18",
+    "react-dom": "^18",
+    "cytoscape": "^3.29.2",
+    "cytoscape-dagre": "^2.5.0",
+    "react-cytoscapejs": "^2.0.0",
+    "dagre": "^0.8.5",
+    "lingo.dev": "latest",
+    "react-pdf": "^7.7.0"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10",
+    "postcss": "^8",
+    "tailwindcss": "^3"
+  }
+}

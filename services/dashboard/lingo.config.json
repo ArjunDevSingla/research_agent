@@ -1,0 +1,8 @@
+{
+  "projectId": "your-lingo-project-id",
+  "sourceLocale": "en",
+  "targetLocales": ["hi", "zh", "es", "pt", "ar", "fr", "de", "ja"],
+  "provider": {
+    "id": "lingo.dev"
+  }
+}
