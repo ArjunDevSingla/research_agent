@@ -13,14 +13,12 @@ from datetime import datetime
 import redis
 from pydantic import BaseModel
 
-# ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [GATEWAY] %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
-# ── Redis ──────────────────────────────────────────────────────────────────────
 REDIS_URL     = os.getenv("REDIS_URL", "redis://redis:6379")   # fixed typo REDDIS → REDIS
 QUEUE_PLANNER = "planner_jobs"
 QUEUE_SEARCH  = "search_jobs"
@@ -29,10 +27,8 @@ QUEUE_EVENTS  = "ws_events"
 def get_redis():
     return redis.from_url(REDIS_URL, decode_responses=True)
 
-# ── WebSocket connection store ─────────────────────────────────────────────────
 active_connections: dict[str, list[WebSocket]] = {}
 
-# ── Schemas ───────────────────────────────────────────────────────────────────
 class SearchRequest(BaseModel):
     query:  str
     locale: str = "en"
@@ -42,6 +38,16 @@ class ConfirmRequest(BaseModel):
     arxiv_url:     str
     target_locale: str = "en"
     max_papers:    int = 8
+
+class TranslateRequest(BaseModel):
+    job_id:        str
+    target_locale: str
+
+class AnnotateRequest(BaseModel):
+    job_id:    str
+    node_id:   str
+    node_type: str
+    text:      str
 
 class AnalyzeRequest(BaseModel):
     arxiv_url:     str = ""
@@ -289,6 +295,48 @@ def get_status(job_id: str):
         "complete":          graph_ready,
     }
 
+@app.post("/translate")
+def translate(req: TranslateRequest):
+    r = get_redis()
+    raw = r.get(f"graph:{req.job_id}")
+    if not raw:
+        raise HTTPException(status_code=404, detail="Graph not found")
+
+    lingo_job = {
+        "job_id":        req.job_id,
+        "target_locale": req.target_locale,
+        "graph":         json.loads(raw)
+    }
+    r.rpush("lingo_jobs", json.dumps(lingo_job))
+    logger.info(f"Re-translation queued — job {req.job_id} → {req.target_locale}")
+    return {"status": "queued", "job_id": req.job_id, "locale": req.target_locale}
+
+@app.post("/annotate")
+def annotate(req: AnnotateRequest):
+    r = get_redis()
+    key  = f"annotations:{req.job_id}:{req.node_id}"
+    data = {
+        "job_id":    req.job_id,
+        "node_id":   req.node_id,
+        "node_type": req.node_type,
+        "text":      req.text,
+        "saved_at":  datetime.utcnow().isoformat()
+    }
+    r.set(key, json.dumps(data))
+    r.expire(key, 604800)  # 7 days
+    return {"status": "saved"}
+
+@app.get("/annotations/{job_id}")
+def get_annotations(job_id: str):
+    r = get_redis()
+    keys = r.keys(f"annotations:{job_id}:*")
+    annotations = []
+    for key in keys:
+        raw = r.get(key)
+        if raw:
+            annotations.append(json.loads(raw))
+    return {"annotations": annotations}
+
 @app.websocket("/ws/{job_id}")
 async def websocket_endpoint(websocket: WebSocket, job_id: str):
     await websocket.accept()
@@ -317,7 +365,6 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
     except WebSocketDisconnect:
         active_connections[job_id].remove(websocket)
         logger.info(f"WS disconnected — job {job_id}")
-
     except Exception as e:
         logger.error(f"WS error for job {job_id}: {e}")
         if websocket in active_connections.get(job_id, []):
