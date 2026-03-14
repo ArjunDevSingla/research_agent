@@ -114,7 +114,12 @@ def parse_llm_output(raw: str, job: dict) -> dict:
             "similarity_type":  sim_types,
             "explanation":      data.get("explanation", ""),
             "key_connections":  data.get("key_connections", []),
-            "locale":           job.get("target_locale", "en")
+            "locale":           job.get("target_locale", "en"),
+            "abstract":         job.get("target_abstract", ""),
+            "arxiv_url":        job.get("target_arxiv_url", ""),
+            "pdf_url":          job.get("target_arxiv_url", "").replace("arxiv.org/abs/", "arxiv.org/pdf/") if job.get("target_arxiv_url") else "",
+            "authors":          job.get("target_authors", []),
+            "year":             job.get("target_year"),
         }
 
     except (json.JSONDecodeError, KeyError, ValueError) as e:
@@ -128,7 +133,12 @@ def parse_llm_output(raw: str, job: dict) -> dict:
             "similarity_type":  ["methodology"],
             "explanation":      "Analysis could not be completed for this paper.",
             "key_connections":  [],
-            "locale":           job.get("target_locale", "en")
+            "locale":           job.get("target_locale", "en"),
+            "abstract":         job.get("target_abstract", ""),
+            "arxiv_url":        job.get("target_arxiv_url", ""),
+            "pdf_url":          job.get("target_arxiv_url", "").replace("arxiv.org/abs/", "arxiv.org/pdf/") if job.get("target_arxiv_url") else "",
+            "authors":          job.get("target_authors", []),
+            "year":             job.get("target_year"),
         }
 
 def push_event(r, event: str, job_id: str, payload: dict = {}) -> None:
