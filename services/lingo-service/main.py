@@ -236,10 +236,7 @@ RESEARCH_GLOSSARY = {
 def make_engine() -> LingoDotDevEngine:
     """Create a configured Lingo.dev engine instance."""
     return LingoDotDevEngine({
-        "api_key":               LINGO_API_KEY,
-        "api_url":               "https://engine.lingo.dev",
-        "batch_size":            50,
-        "ideal_batch_item_size": 200,
+        "api_key": LINGO_API_KEY,
     })
 
 def get_redis():
