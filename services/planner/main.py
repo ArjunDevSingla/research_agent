@@ -13,28 +13,27 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Queue in Reddis
+
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
 
-QUEUE_PLANNER = "planner_jobs"
-QUEUE_SIMILARITY = "similarity_jobs"
+QUEUE_PLANNER         = "planner_jobs"
+QUEUE_SIMILARITY      = "similarity_jobs"
 QUEUE_FUTURE_RESEARCH = "future_research_jobs"
-QUEUE_EVENTS = "ws_events"
+QUEUE_EVENTS          = "ws_events"
 
-# To track all the requests
-TRACKER_PREFIX = "tracker:"
+TRACKER_PREFIX        = "tracker:"
 
 def get_redis():
     return redis.from_url(REDIS_URL, decode_responses=True)
 
-def push_to_queue(r, queue:str, data:dict) -> None:
+def push_to_queue(r, queue: str, data: dict) -> None:
     r.rpush(queue, json.dumps(data))
 
 def push_event(r, event: str, job_id: str, payload: dict = {}) -> None:
     r.rpush(QUEUE_EVENTS, json.dumps({
-        "event": event,
-        "job_id": job_id,
-        "payload": payload,
+        "event":     event,
+        "job_id":    job_id,
+        "payload":   payload,
         "timestamp": datetime.utcnow().isoformat()
     }))
 
@@ -44,15 +43,24 @@ def set_tracker(r, job_id: str, worker_type: str, total: int) -> None:
     r.expire(key, 3600)    # auto-cleanup after 1 hour
     logger.info(f"Tracker set — job {job_id} expects {total} {worker_type} worker(s)")
 
-# Planner Logic
-def run_planner(job:dict, r) -> None:
-    job_id = job["job_id"]
-    arxiv_url = job["arxiv_url"]
+
+# ── Core planner logic ─────────────────────────────────────────────────────────
+
+def run_planner(job: dict, r) -> None:
+    """
+    Process one job from the planner queue.
+
+    job = {
+      job_id, arxiv_url, target_locale, max_papers, created_at
+    }
+    """
+    job_id       = job["job_id"]
+    arxiv_url    = job["arxiv_url"]
     target_locale = job.get("target_locale", "en")
-    max_papers = job.get("max_papers", 8)
+    max_papers   = job.get("max_papers", 8)
 
     logger.info(f"Job {job_id} — starting: {arxiv_url}")
-    
+
     push_event(r, "job_started", job_id, {
         "arxiv_url":    arxiv_url,
         "target_locale": target_locale
@@ -69,8 +77,17 @@ def run_planner(job:dict, r) -> None:
                        f"Make sure it is a valid arxiv URL."
         })
         return
-    
+
     logger.info(f"Job {job_id} — seed paper: '{seed['title']}' pdf={'yes' if seed.get('pdf_url') else 'no'}")
+
+    r.set(f"seed_meta:{job_id}", json.dumps({
+        "title":    seed["title"],
+        "abstract": seed.get("abstract", ""),
+        "authors":  seed.get("authors", []),
+        "year":     seed.get("year"),
+        "arxiv_url": seed.get("arxiv_url", ""),
+        "pdf_url":  seed.get("pdf_url", ""),
+    }), ex=3600)
 
     logger.info(f"Job {job_id} — fetching similar papers (max={max_papers})")
 
@@ -85,31 +102,34 @@ def run_planner(job:dict, r) -> None:
             "message": "No similar papers found. Try a different paper."
         })
         return
-    
+
     logger.info(f"Job {job_id} — found {len(similar_papers)} similar papers")
 
     push_event(r, "discovery_complete", job_id, {
-        "seed_title": seed["title"],
-        "seed_year": seed["year"],
-        "seed_authors": seed["authors"][:3],
+        "seed_title":    seed["title"],
+        "seed_year":     seed["year"],
+        "seed_authors":  seed["authors"][:3],   # first 3 authors only
         "similar_count": len(similar_papers)
     })
 
-    set_tracker(r, job_id, "similarity", total=len(similar_papers))
+    set_tracker(r, job_id, "similarity",      total=len(similar_papers))
     set_tracker(r, job_id, "future_research", total=1)
 
     logger.info(f"Job {job_id} — spawning {len(similar_papers)} similarity workers")
 
     for paper in similar_papers:
         similarity_job = {
-            "job_id": job_id,
-            "seed_title": seed["title"],
-            "seed_abstract": seed["abstract"],
-            "target_paper_id": paper["paper_id"],
-            "target_title": paper["title"],
-            "target_abstract": paper["abstract"],
+            "job_id":           job_id,
+            "seed_title":       seed["title"],
+            "seed_abstract":    seed["abstract"],
+            "target_paper_id":  paper["paper_id"],
+            "target_title":     paper["title"],
+            "target_abstract":  paper["abstract"],
             "target_arxiv_url": paper.get("arxiv_url"),
-            "target_locale": target_locale
+            "target_authors":   paper.get("authors", []),
+            "target_year":      paper.get("year"),
+            "target_pdf_url":   paper.get("pdf_url"),
+            "target_locale":    target_locale
         }
         push_to_queue(r, QUEUE_SIMILARITY, similarity_job)
 
@@ -124,24 +144,29 @@ def run_planner(job:dict, r) -> None:
     logger.info(f"Job {job_id} — spawning future research worker")
 
     related_papers = [
-        {"title": p["title"], "abstract": p["abstract"], "pdf_url": p.get("pdf_url")} for p in similar_papers if p.get("abstract")
+        {
+            "title":    p["title"],
+            "abstract": p["abstract"],
+            "pdf_url":  p.get("pdf_url")    # worker uses this to download + extract sections
+        }
+        for p in similar_papers
+        if p.get("abstract")
     ]
 
     future_job = {
-        "job_id": job_id,
-        "seed_title": seed["title"],
-        "seed_abstract": seed["abstract"],
-        "seed_pdf_url": seed.get("pdf_url"),
-        "related_papers": related_papers,
-        "target_locale": target_locale
+        "job_id":          job_id,
+        "seed_title":      seed["title"],
+        "seed_abstract":   seed["abstract"],
+        "seed_pdf_url":    seed.get("pdf_url"),   # worker downloads this for section extraction
+        "related_papers":  related_papers,
+        "target_locale":   target_locale
     }
-
     push_to_queue(r, QUEUE_FUTURE_RESEARCH, future_job)
 
     push_event(r, "worker_started", job_id, {
-        "worker_type": "future_research",
-        "paper_title": seed["title"],
-        "related_paper_count": len(related_papers)
+        "worker_type":          "future_research",
+        "paper_title":          seed["title"],
+        "related_paper_count":  len(related_papers)
     })
 
     logger.info(
@@ -160,7 +185,7 @@ def main():
 
             if result:
                 _, raw = result
-                job = json.loads(raw)
+                job    = json.loads(raw)
                 logger.info(f"Received job: {job.get('job_id')}")
 
                 try:
