@@ -196,7 +196,7 @@ export default function LandingPage() {
 
             {/* CTA */}
             <a
-              href="/"
+              href="/dashboard"
               style={{ padding:'9px 20px', borderRadius:10, background:'linear-gradient(135deg,#0ea5e9,#8b5cf6)', color:'#fff', fontSize:13, fontWeight:700, textDecoration:'none', boxShadow:'0 4px 22px rgba(14,165,233,0.35)', letterSpacing:-0.2 }}
               className="btn-primary"
             >
@@ -272,13 +272,13 @@ export default function LandingPage() {
 
           {/* Buttons */}
           <div className="cta-row" style={{ display:'flex', gap:16, justifyContent:'center', flexWrap:'wrap', animation:'fadeup .6s .3s ease both' }}>
-            <a href="/"
+            <a href="/dashboard"
               style={{ padding:'15px 36px', borderRadius:13, background:'linear-gradient(135deg,#0ea5e9,#8b5cf6)', color:'#fff', fontSize:16, fontWeight:800, textDecoration:'none', boxShadow:'0 8px 32px rgba(14,165,233,0.4)', letterSpacing:-0.3 }}
               className="btn-primary"
             >
               {content.cta_primary}
             </a>
-            <a href="https://github.com" target="_blank" rel="noopener"
+            <a href="https://github.com/ArjunDevSingla/research_agent" target="_blank" rel="noopener"
               style={{ padding:'15px 36px', borderRadius:13, background:'rgba(255,255,255,0.05)', border:'1px solid rgba(255,255,255,0.1)', color:'#cbd5e1', fontSize:16, fontWeight:600, textDecoration:'none' }}
               className="btn-ghost"
             >
@@ -457,7 +457,7 @@ export default function LandingPage() {
           ))}
         </div>
 
-        <a href="/"
+        <a href="/dashboard"
           style={{ display:'inline-flex', alignItems:'center', gap:8, padding:'12px 28px', borderRadius:12, background:'linear-gradient(135deg,#0ea5e9,#8b5cf6)', color:'#fff', fontSize:14, fontWeight:700, textDecoration:'none', boxShadow:'0 4px 20px rgba(14,165,233,0.3)' }}
           className="btn-primary"
         >
