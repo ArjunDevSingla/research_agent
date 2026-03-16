@@ -498,6 +498,7 @@ KnowledgeGraph         # Final reconciler output
 - [ ] User accounts + persistent graph library (cloud sync)
 - [ ] Support for non-arXiv papers (DOI lookup via Unpaywall)
 - [ ] Collaborative annotations on graph nodes
+- [ ] LLM assistant for research doubts
 
 ---
 
@@ -509,12 +510,6 @@ KnowledgeGraph         # Final reconciler output
 4. Open a pull request
 
 Please keep services independent — they communicate only through Redis queues and the REST API.
-
----
-
-## License
-
-MIT — free to use, modify, and distribute.
 
 ---
 
