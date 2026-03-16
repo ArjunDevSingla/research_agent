@@ -202,9 +202,9 @@ def search_one_query(query: str, limit: int = PAPERS_PER_QUERY) -> list:
  
     papers = []
     for p in data.get("data", []):
-        if not p.get("abstract"):
-            continue
         arxiv_id = p.get("externalIds", {}).get("ArXiv")
+        if not p.get("abstract") or not arxiv_id:
+            continue
         pdf_url  = (
             (p.get("openAccessPdf") or {}).get("url")
             or (f"https://arxiv.org/pdf/{arxiv_id}" if arxiv_id else None)
@@ -221,6 +221,60 @@ def search_one_query(query: str, limit: int = PAPERS_PER_QUERY) -> list:
         if len(papers) >= limit:
             break
  
+    return papers
+
+def search_via_paper_lookup(query: str, limit: int = 5) -> list:
+    """
+    Fallback: find a seed paper by title match, then get its recommendations.
+    Used when /paper/search returns 403.
+    """
+    # Step 1: find a paper matching the query
+    url    = f"{GRAPH_API}/paper/search"
+    params = {"query": query, "fields": "paperId,title", "limit": 1}
+    try:
+        with httpx.Client(timeout=12) as client:
+            resp = client.get(url, headers=SS_HEADERS, params=params)
+            if not resp.ok:
+                return []
+            hits = resp.json().get("data", [])
+            if not hits:
+                return []
+            paper_id = hits[0]["paperId"]
+    except Exception:
+        return []
+ 
+    # Step 2: get recommendations for that paper
+    rec_url = f"https://api.semanticscholar.org/recommendations/v1/papers/forpaper/{paper_id}"
+    params  = {"fields": PAPER_FIELDS, "limit": limit + 3}
+    try:
+        with httpx.Client(timeout=12) as client:
+            resp = client.get(rec_url, headers=SS_HEADERS, params=params)
+            if not resp.ok:
+                return []
+            data = resp.json()
+    except Exception:
+        return []
+ 
+    papers = []
+    for p in data.get("recommendedPapers", []):
+        arxiv_id = p.get("externalIds", {}).get("ArXiv")
+        if not p.get("abstract") or not arxiv_id:
+            continue
+        pdf_url  = (
+            (p.get("openAccessPdf") or {}).get("url")
+            or (f"https://arxiv.org/pdf/{arxiv_id}" if arxiv_id else None)
+        )
+        papers.append({
+            "paper_id":  p.get("paperId", ""),
+            "title":     p.get("title", ""),
+            "abstract":  p.get("abstract", ""),
+            "year":      p.get("year"),
+            "authors":   [a["name"] for a in p.get("authors", [])],
+            "arxiv_url": f"https://arxiv.org/abs/{arxiv_id}" if arxiv_id else None,
+            "pdf_url":   pdf_url,
+        })
+        if len(papers) >= limit:
+            break
     return papers
 
 def search_parallel(queries: list[str]) -> list: 
@@ -262,8 +316,9 @@ async def process_job(job: dict, r) -> None:
  
     engine = make_lingo()
  
-    target_locale = given_locale or await detect_language(engine, original_query)
-    logger.info(f"Job {job_id} — locale: {target_locale}")
+    detected_locale = await detect_language(engine, original_query)
+    target_locale   = detected_locale if detected_locale and detected_locale != "en" else (given_locale or "en")
+    logger.info(f"Job {job_id} — given_locale={given_locale} detected={detected_locale} using={target_locale}")
  
     english_query = await translate_to_english(engine, original_query, target_locale)
  
@@ -309,18 +364,20 @@ async def process_job(job: dict, r) -> None:
     r.expire(store_key, 3600)
  
     push_event(r, "search_results", job_id, {
-        "query":         original_query,
-        "target_locale": target_locale,
-        "queries_used":  queries,
+        "query":           original_query,
+        "detected_locale": detected_locale,
+        "target_locale":   target_locale,
+        "queries_used":    queries,
         "papers": [
             {
-                "paper_id":       p["paper_id"],
-                "title":          p.get("translated_title",    p["title"]),
-                "original_title": p["title"],
-                "abstract":       p.get("translated_abstract", p.get("abstract", ""))[:300],
-                "year":           p.get("year"),
-                "authors":        p.get("authors", [])[:3],
-                "arxiv_url":      p.get("arxiv_url"),
+                "paper_id":           p["paper_id"],
+                "title":              p["title"],
+                "translated_title":   p.get("translated_title"),
+                "abstract":           (p.get("abstract") or "")[:300],
+                "translated_abstract":p.get("translated_abstract"),
+                "year":               p.get("year"),
+                "authors":            p.get("authors", [])[:3],
+                "arxiv_url":          p.get("arxiv_url"),
             }
             for p in papers
         ]
