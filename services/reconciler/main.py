@@ -271,7 +271,14 @@ def build_knowledge_graph(
         "id":    seed_id,
         "type":  "seed",
         "label": seed_title,
-        "data":  {"title": seed_title}
+        "data": {
+            "title":     seed_title,
+            "abstract":  seed_meta.get("abstract", ""),
+            "authors":   seed_meta.get("authors", []),
+            "year":      seed_meta.get("year"),
+            "arxiv_url": seed_meta.get("arxiv_url", ""),
+            "pdf_url":   seed_meta.get("pdf_url", ""),
+        }
     })
 
     for result in similarity_results:
@@ -377,9 +384,11 @@ def reconcile(job_id: str, r) -> None:
     r.set(graph_key, json.dumps(graph))
     r.expire(graph_key, 3600)
 
+    target_locale = r.get(f"locale:{job_id}") or "en"
     r.rpush(QUEUE_LINGO, json.dumps({
-        "job_id":  job_id,
-        "graph":   graph
+        "job_id":        job_id,
+        "target_locale": target_locale,
+        "graph":         graph
     }))
 
     logger.info(f"Job {job_id} — pushed to lingo queue")
