@@ -1,0 +1,6 @@
+pymupdf>=1.23.0
+httpx>=0.25.0
+redis>=5.0.0
+pillow>=10.0.0
+pytesseract>=0.3.10
+lingodotdev>=1.0.0
