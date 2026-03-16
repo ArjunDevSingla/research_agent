@@ -237,6 +237,7 @@ def make_engine() -> LingoDotDevEngine:
     """Create a configured Lingo.dev engine instance."""
     return LingoDotDevEngine({
         "api_key": LINGO_API_KEY,
+        "api_url": "https://engine.lingo.dev",
     })
 
 def get_redis():
@@ -280,19 +281,33 @@ def extract_node_fields(nodes: list[dict]) -> tuple[dict, dict, dict]:
             else:
                 group_b[key] = title
  
+        if node["type"] == "seed":
+            if data.get("abstract"):
+                group_a[f"node_{nid}__abstract"] = data["abstract"][:500]
+
         if node["type"] == "similar_paper":
             for field in ("explanation", "connection_description"):
                 if data.get(field):
                     group_a[f"node_{nid}__{field}"] = data[field]
+            if data.get("abstract"):
+                group_a[f"node_{nid}__abstract"] = data["abstract"][:500]
+            if data.get("key_connections"):
+                group_a[f"node_{nid}__key_connections"] = " ||| ".join(data["key_connections"])
  
         if node["type"] == "future_gap":
-            if data.get("description"):
-                group_b[f"node_{nid}__description"] = data["description"]
+            if data.get("gap_description"):
+                group_b[f"node_{nid}__gap_description"] = data["gap_description"]
             if data.get("gap_title") and data["gap_title"] != node.get("label"):
                 group_b[f"node_{nid}__gap_title"] = data["gap_title"]
             aspects = data.get("still_open_aspects", [])
             if aspects:
                 group_b[f"node_{nid}__still_open_aspects"] = " ||| ".join(aspects)
+            questions = data.get("research_questions", [])
+            if questions:
+                group_b[f"node_{nid}__research_questions"] = " ||| ".join(questions)
+            source = data.get("source_paper", "") or data.get("compared_with", "")
+            if source:
+                group_b[f"node_{nid}__source_paper"] = source
  
     return group_a, group_b
 
@@ -318,49 +333,20 @@ async def translate_group(
 ) -> dict:
     if not fields:
         return {}
- 
-    accumulated = {}
- 
-    def on_batch_done(source_chunk: dict, translated_chunk: dict) -> None:
-        accumulated.update(translated_chunk)
-        progress_counter[0] += len(translated_chunk)
-
-        push_event(r, "translation_progress", job_id, {
-            "status":       "in_progress",
-            "label":        label,
-            "done_fields":  progress_counter[0],
-            "total_fields": progress_counter[1],
-            "pct":          round(progress_counter[0] / max(progress_counter[1], 1) * 100)
-        })
-
-        for key, original in source_chunk.items():
-            translated = translated_chunk.get(key, "")
-            for term in RESEARCH_GLOSSARY:
-                if term.lower() in original.lower():
-                    if term.lower() not in translated.lower():
-                        logger.warning(
-                            f"  [{label}] Glossary term '{term}' may have been "
-                            f"altered in translation for key '{key}'"
-                        )
- 
-        logger.info(
-            f"  [{label}] batch done — "
-            f"{progress_counter[0]}/{progress_counter[1]} fields translated"
-        )
 
     try:
-        await engine.localize_object(
+        result = await engine.localize_object(
             fields,
             {
                 "source_locale":  source_locale,
                 "target_locale":  target_locale,
                 "fast":           True,
-                "reference": RESEARCH_GLOSSARY,
-                "progress_callback": on_batch_done,     # fires after each batch
             }
         )
-        logger.info(f"  [{label}] complete — {len(accumulated)} fields translated")
-        return accumulated
+        logger.info(f"  [{label}] raw result type: {type(result)}, value preview: {str(result)[:200]}")
+        translated = result if isinstance(result, dict) else {}
+        logger.info(f"  [{label}] complete - {len(translated)}")
+        return translated
  
     except Exception as e:
         logger.warning(f"  [{label}] translation failed: {e} — using originals")
@@ -379,14 +365,24 @@ def apply_translations(graph: dict, all_translations: dict) -> dict:
             node["display_label"]  = all_translations[key]
             node["original_label"] = node["label"]
  
+        if node["type"] in ("seed", "similar_paper"):
+            key = f"node_{nid}__abstract"
+            if key in all_translations:
+                data["translated_abstract"] = all_translations[key]
+
         if node["type"] == "similar_paper":
             for field in ("explanation", "connection_description"):
                 key = f"node_{nid}__{field}"
                 if key in all_translations:
                     data[f"translated_{field}"] = all_translations[key]
+            key = f"node_{nid}__key_connections"
+            if key in all_translations:
+                data["translated_key_connections"] = [
+                    s.strip() for s in all_translations[key].split("|||") if s.strip()
+                ]
  
         if node["type"] == "future_gap":
-            for field in ("description", "gap_title"):
+            for field in ("gap_description", "gap_title"):
                 key = f"node_{nid}__{field}"
                 if key in all_translations:
                     data[f"translated_{field}"] = all_translations[key]
@@ -397,6 +393,16 @@ def apply_translations(graph: dict, all_translations: dict) -> dict:
                     for s in all_translations[key].split("|||")
                     if s.strip()
                 ]
+            key = f"node_{nid}__research_questions"
+            if key in all_translations:
+                data["translated_research_questions"] = [
+                    s.strip()
+                    for s in all_translations[key].split("|||")
+                    if s.strip()
+                ]
+            key = f"node_{nid}__source_paper"
+            if key in all_translations:
+                data["translated_source_paper"] = all_translations[key]
  
         node["data"] = data
  
@@ -458,6 +464,9 @@ async def translate_graph(
             )
  
             translated_a, translated_b, translated_c = results
+            logger.info(f"translated_a keys: {list(translated_a.keys())[:3]}")
+            logger.info(f"translated_b keys: {list(translated_b.keys())[:3]}")
+            logger.info(f"translated_c keys: {list(translated_c.keys())[:3]}")
  
         all_translations = {**translated_a, **translated_b, **translated_c}
         done_fields      = len(all_translations)
@@ -477,7 +486,6 @@ async def translate_graph(
  
         logger.info(
             f"Job {job_id} — translation complete: "
-            f"{done_fields}/{total_fields} fields translated"
         )
         return translated_graph
  
@@ -516,7 +524,6 @@ async def translate_search_results(
                     "source_locale":  DEFAULT_SOURCE,
                     "target_locale":  target_locale,
                     "fast":           True,
-                    "reference": RESEARCH_GLOSSARY,
                 }
             )
  
@@ -550,8 +557,20 @@ async def process_job(job: dict, r) -> None:
         target_locale = await detect_language(original_query)
  
     logger.info(f"Job {job_id} — target locale: {target_locale}")
+
+    # Per-locale cache check — skip translation if already done for this language
+    cache_key = f"{TRANSLATED_PREFIX}{job_id}:{target_locale}"
+    if target_locale != "en" and r.get(cache_key):
+        logger.info(f"Job {job_id} — cache hit for locale={target_locale}, reusing")
+        push_event(r, "graph_translated", job_id, {
+            "target_locale": target_locale,
+            "translated":    True,
+            "cached":        True,
+        })
+        return
+
     push_event(r, "translation_started", job_id, {"target_locale": target_locale})
- 
+
     # Skip translation if target is English
     if target_locale == "en":
         logger.info(f"Job {job_id} — target is English, skipping translation")
@@ -560,13 +579,11 @@ async def process_job(job: dict, r) -> None:
         translated_graph["target_locale"] = "en"
     else:
         translated_graph = await translate_graph(graph, target_locale, job_id, r)
- 
-    key = f"{TRANSLATED_PREFIX}{job_id}"
-    r.set(key, json.dumps(translated_graph))
-    r.expire(key, 3600)
- 
-    r.set(f"{GRAPH_PREFIX}{job_id}", json.dumps(translated_graph))
- 
+
+    # Store under per-locale key; graph:{job_id} stays as original English — never overwritten
+    r.set(cache_key, json.dumps(translated_graph))
+    r.expire(cache_key, 3600)
+
     push_event(r, "graph_translated", job_id, {
         "target_locale":     target_locale,
         "translated":        translated_graph.get("translated", False),
@@ -575,7 +592,7 @@ async def process_job(job: dict, r) -> None:
         "node_count":        len(translated_graph.get("nodes", [])),
         "edge_count":        len(translated_graph.get("edges", []))
     })
- 
+
     logger.info(f"Job {job_id} — done ✓")
 
 async def main_async():
