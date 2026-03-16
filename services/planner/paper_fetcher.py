@@ -81,16 +81,17 @@ def fetch_paper_metadata(arxiv_url: str) -> Optional[dict]:
         return None
 
     result = {
-        "paper_id": data.get("paperId", ""),
-        "title":    data.get("title", "Unknown Title"),
-        "abstract": data.get("abstract", ""),
-        "arxiv_id": arxiv_id,
-        "year":     data.get("year"),
-        "pdf_url":  (
+        "paper_id":  data.get("paperId", ""),
+        "title":     data.get("title", "Unknown Title"),
+        "abstract":  data.get("abstract", ""),
+        "arxiv_id":  arxiv_id,
+        "arxiv_url": f"https://arxiv.org/abs/{arxiv_id}",
+        "year":      data.get("year"),
+        "pdf_url":   (
             data.get("openAccessPdf", {}).get("url")
             or f"https://arxiv.org/pdf/{arxiv_id}"
         ),
-        "authors":  [a["name"] for a in data.get("authors", [])]
+        "authors":   [a["name"] for a in data.get("authors", [])]
     }
 
     logger.info(f"Fetched: '{result['title']}' ({result['year']})")
