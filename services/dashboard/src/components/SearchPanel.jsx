@@ -1,9 +1,31 @@
 'use client'
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 
 const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:8000'
 
-export default function SearchPanel({ onJobStart, targetLocale, searchResults = [], theme = 'dark' }) {
+// Detect non-Latin script languages from query text using unicode ranges
+function detectNonEnglishLocale(text) {
+  const scripts = [
+    { range: /[\u0900-\u097F]/, locale: 'hi' },  // Devanagari (Hindi)
+    { range: /[\u0600-\u06FF\uFB50-\uFDFF\uFE70-\uFEFF]/, locale: 'ar' }, // Arabic/Urdu
+    { range: /[\u4E00-\u9FFF\u3400-\u4DBF]/, locale: 'zh' }, // Chinese
+    { range: /[\u3040-\u309F\u30A0-\u30FF]/, locale: 'ja' }, // Japanese
+    { range: /[\uAC00-\uD7AF]/, locale: 'ko' },  // Korean
+    { range: /[\u0E00-\u0E7F]/, locale: 'th' },  // Thai
+    { range: /[\u0400-\u04FF]/, locale: 'ru' },  // Cyrillic (Russian/Ukrainian)
+    { range: /[\u0980-\u09FF]/, locale: 'bn' },  // Bengali
+    { range: /[\u0A00-\u0A7F]/, locale: 'pa' },  // Gurmukhi (Punjabi)
+    { range: /[\u0B00-\u0B7F]/, locale: 'or' },  // Odia
+    { range: /[\u0C00-\u0C7F]/, locale: 'te' },  // Telugu
+    { range: /[\u0B80-\u0BFF]/, locale: 'ta' },  // Tamil
+  ]
+  for (const { range, locale } of scripts) {
+    if (range.test(text)) return locale
+  }
+  return null
+}
+
+export default function SearchPanel({ onJobStart, onLocaleDetected, targetLocale, searchResults = [], theme = 'dark', isPipelineRunning = false }) {
   const [query,       setQuery]       = useState('')
   const [localResults,setLocalResults]= useState([])
   const [loading,     setLoading]     = useState(false)
@@ -13,13 +35,15 @@ export default function SearchPanel({ onJobStart, targetLocale, searchResults = 
   const results = searchResults.length > 0 ? searchResults : localResults
   const [searchJobId, setSearchJobId] = useState(null)
   const [confirming,  setConfirming]  = useState(null)  // paper_id being confirmed
+  const [selectedPaperId, setSelectedPaperId] = useState(null)
+  const [confirmModal, setConfirmModal] = useState(null) // { paper, resolve }
+  const confirmResolveRef = useRef(null)
 
   const isArxivId = (q) =>
     /^\d{4}\.\d{4,5}$/.test(q.trim()) || q.includes('arxiv.org')
 
-  async function handleSubmit(e) {
-    e.preventDefault()
-    if (!query.trim()) return
+  // Core search execution — called after locale is resolved
+  async function doSearch(locale) {
     setLoading(true)
     setError('')
     setLocalResults([])
@@ -30,11 +54,11 @@ export default function SearchPanel({ onJobStart, targetLocale, searchResults = 
         const resp = await fetch(`${GATEWAY}/analyze`, {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ arxiv_id: query.trim(), target_locale: targetLocale })
+          body:    JSON.stringify({ arxiv_id: query.trim(), target_locale: locale })
         })
         const data = await resp.json()
         if (data.job_id) {
-          onJobStart(data.job_id, query.trim())
+          onJobStart(data.job_id, query.trim(), undefined, locale)
         } else {
           setError(data.message || 'Analysis failed')
         }
@@ -42,12 +66,12 @@ export default function SearchPanel({ onJobStart, targetLocale, searchResults = 
         const resp = await fetch(`${GATEWAY}/search`, {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ query: query.trim(), locale: targetLocale })
+          body:    JSON.stringify({ query: query.trim(), locale })
         })
         const data = await resp.json()
         if (data.job_id) {
           setSearchJobId(data.job_id)
-          onJobStart(data.job_id, query.trim(), 'search')
+          onJobStart(data.job_id, query.trim(), 'search', locale)
           setLocalResults([])
         } else {
           setError(data.message || 'Search failed')
@@ -60,7 +84,39 @@ export default function SearchPanel({ onJobStart, targetLocale, searchResults = 
     }
   }
 
+  function handleSubmit(e) {
+    e.preventDefault()
+    if (!query.trim()) return
+
+    // For natural language queries, detect non-English script client-side
+    if (!isArxivId(query)) {
+      const detected = detectNonEnglishLocale(query)
+      if (detected && onLocaleDetected) {
+        // Show centered modal — search is paused until user responds
+        onLocaleDetected(detected, (chosenLocale) => doSearch(chosenLocale))
+        return
+      }
+      // No non-English script detected → use current TopBar locale
+      doSearch(targetLocale)
+      return
+    }
+
+    // ArxivID → use current targetLocale (set by TopBar)
+    doSearch(targetLocale)
+  }
+
+  function showConfirmModal(paper) {
+    return new Promise(resolve => {
+      confirmResolveRef.current = resolve
+      setConfirmModal({ paper })
+    })
+  }
+
   async function handlePaperSelect(paper) {
+    if (isPipelineRunning) {
+      const ok = await showConfirmModal(paper)
+      if (!ok) return
+    }
     if (!paper.arxiv_url) {
       setError('This paper has no arXiv URL — cannot analyze')
       return
@@ -83,7 +139,8 @@ export default function SearchPanel({ onJobStart, targetLocale, searchResults = 
         if (data.status === 'error') {
           setError(data.message || 'Confirm failed')
         } else {
-          onJobStart(searchJobId, paper.title || paper.original_title, 'confirm')
+          onJobStart(searchJobId, paper.title || paper.original_title, 'confirm', targetLocale)
+          setSelectedPaperId(paper.paper_id)
         }
       } else {
         // Fallback: direct analyze
@@ -97,7 +154,8 @@ export default function SearchPanel({ onJobStart, targetLocale, searchResults = 
         })
         const data = await resp.json()
         if (data.job_id) {
-          onJobStart(data.job_id, paper.title || paper.original_title, 'confirm')
+          onJobStart(data.job_id, paper.title || paper.original_title, 'confirm', targetLocale)
+          setSelectedPaperId(paper.paper_id)
         } else {
           setError(data.message || 'Analysis failed')
         }
@@ -109,8 +167,50 @@ export default function SearchPanel({ onJobStart, targetLocale, searchResults = 
     }
   }
 
+  function handleConfirmYes() {
+    setConfirmModal(null)
+    confirmResolveRef.current?.(true)
+  }
+
+  function handleConfirmNo() {
+    setConfirmModal(null)
+    confirmResolveRef.current?.(false)
+  }
+
   return (
     <div className="flex flex-col h-full">
+
+      {/* Confirm override modal */}
+      {confirmModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={handleConfirmNo} />
+          <div className={`relative w-80 rounded-2xl p-6 shadow-2xl
+                           ${dk ? 'bg-slate-900 border border-white/10' : 'bg-white border border-gray-200'}`}>
+            <div className="text-2xl mb-3 text-center">⚠️</div>
+            <h3 className={`text-sm font-semibold text-center mb-2 ${dk ? 'text-white' : 'text-gray-900'}`}>
+              Graph in progress
+            </h3>
+            <p className={`text-xs text-center leading-relaxed mb-5 ${dk ? 'text-slate-400' : 'text-gray-500'}`}>
+              A graph is currently being built. Start a new analysis anyway? The current graph will be saved to your library.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={handleConfirmNo}
+                className={`flex-1 py-2 rounded-xl text-xs font-medium border transition-colors
+                             ${dk ? 'border-white/15 text-slate-300 hover:bg-white/8' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmYes}
+                className="flex-1 py-2 rounded-xl text-xs font-medium bg-sky-500 hover:bg-sky-400 text-white transition-colors"
+              >
+                Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Header */}
       <div className={`px-5 pt-5 pb-4 border-b ${dk ? 'border-white/8' : 'border-gray-100'}`}>
@@ -178,6 +278,7 @@ export default function SearchPanel({ onJobStart, targetLocale, searchResults = 
             dk={dk}
             onClick={() => handlePaperSelect(paper)}
             loading={confirming === paper.paper_id}
+            selected={selectedPaperId === paper.paper_id}
           />
         ))}
       </div>
@@ -185,14 +286,16 @@ export default function SearchPanel({ onJobStart, targetLocale, searchResults = 
   )
 }
 
-function SearchResultCard({ paper, index, dk, onClick, loading }) {
+function SearchResultCard({ paper, index, dk, onClick, loading, selected }) {
   return (
     <div
       onClick={onClick}
       className={`p-3 rounded-xl border cursor-pointer transition-all duration-150
                   hover:-translate-y-0.5 relative
-                  ${loading
-                    ? dk ? 'bg-slate-700/50 border-sky-500/40' : 'bg-sky-50 border-sky-300'
+                  ${selected
+                    ? dk ? 'bg-sky-500/15 border-sky-500/50' : 'bg-sky-50 border-sky-400'
+                    : loading
+                    ? dk ? 'bg-slate-700/50 border-sky-500/40' : 'bg-blue-50 border-blue-300'
                     : dk ? 'bg-slate-800/50 border-white/8 hover:border-white/15 hover:bg-slate-800/80'
                          : 'bg-white border-gray-200 hover:border-gray-300 hover:shadow-sm'
                   }`}
@@ -211,7 +314,7 @@ function SearchResultCard({ paper, index, dk, onClick, loading }) {
         {paper.year && <span className={`text-xs shrink-0 ${dk ? 'text-slate-500' : 'text-gray-400'}`}>{paper.year}</span>}
       </div>
       <p className={`text-sm font-medium leading-snug mb-1 ${dk ? 'text-slate-200' : 'text-gray-800'}`}>
-        {paper.title}
+        {paper.translated_title || paper.title}
       </p>
       {paper.authors?.length > 0 && (
         <p className={`text-xs truncate mb-1.5 ${dk ? 'text-slate-500' : 'text-gray-400'}`}>
@@ -220,7 +323,7 @@ function SearchResultCard({ paper, index, dk, onClick, loading }) {
       )}
       {paper.abstract && (
         <p className={`text-xs line-clamp-2 leading-relaxed ${dk ? 'text-slate-600' : 'text-gray-500'}`}>
-          {paper.abstract}
+          {paper.translated_abstract || paper.abstract}
         </p>
       )}
     </div>

@@ -155,13 +155,13 @@ function PaperCard({ node, selected, onClick, theme, index }) {
 
   const back = (
     <div className="h-full flex flex-col justify-between">
-      {d.explanation ? (
+      {(d.translated_explanation || d.explanation) ? (
         <>
           <p className={`text-xs font-semibold mb-1 ${dk ? 'text-slate-400' : 'text-gray-500'}`}>Why similar</p>
-          <p className={`text-xs leading-relaxed line-clamp-4 flex-1 ${dk ? 'text-slate-300' : 'text-gray-700'}`}>{d.explanation}</p>
+          <p className={`text-xs leading-relaxed line-clamp-4 flex-1 ${dk ? 'text-slate-300' : 'text-gray-700'}`}>{d.translated_explanation || d.explanation}</p>
         </>
-      ) : d.abstract ? (
-        <p className={`text-xs leading-relaxed line-clamp-5 ${dk ? 'text-slate-300' : 'text-gray-700'}`}>{d.abstract}</p>
+      ) : (d.translated_abstract || d.abstract) ? (
+        <p className={`text-xs leading-relaxed line-clamp-5 ${dk ? 'text-slate-300' : 'text-gray-700'}`}>{d.translated_abstract || d.abstract}</p>
       ) : null}
       <p className={`text-xs mt-1 ${dk ? 'text-blue-400' : 'text-blue-600'}`}>Click for full details →</p>
     </div>
@@ -189,7 +189,7 @@ function GapCard({ node, selected, onClick, theme, index }) {
   const pct    = Math.round((d.confidence || 0) * 100)
   const col    = theme === 'dark' ? (GAP_COLORS[status] || GAP_COLORS.open) : (GAP_COLORS_LIGHT[status] || GAP_COLORS_LIGHT.open)
   const dk     = theme === 'dark'
-  const src    = d.source_paper || d.compared_with || ''
+  const src    = d.translated_source_paper || d.source_paper || d.compared_with || ''
   const srcShort = src.length > 28 ? src.slice(0, 28) + '…' : src
 
   const front = (
@@ -216,10 +216,10 @@ function GapCard({ node, selected, onClick, theme, index }) {
 
   const back = (
     <div className="h-full flex flex-col justify-between">
-      {d.gap_description ? (
+      {(d.translated_gap_description || d.gap_description) ? (
         <>
           <p className={`text-xs font-semibold mb-1 ${dk ? 'text-slate-400' : 'text-gray-500'}`}>Why this gap</p>
-          <p className={`text-xs leading-relaxed line-clamp-4 flex-1 ${dk ? 'text-slate-300' : 'text-gray-700'}`}>{d.gap_description}</p>
+          <p className={`text-xs leading-relaxed line-clamp-4 flex-1 ${dk ? 'text-slate-300' : 'text-gray-700'}`}>{d.translated_gap_description || d.gap_description}</p>
         </>
       ) : null}
       {srcShort && <p className="text-xs mt-1" style={{ color: dk ? '#a78bfa' : '#7c3aed' }}>From: {srcShort}</p>}

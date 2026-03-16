@@ -33,8 +33,8 @@ function graphToCytoscape(graph) {
     elements.push({
       data: {
         id:           node.id,
-        label:        truncate(node.label, 40),
-        full_label:   node.label,
+        label:        truncate(node.display_label || node.label, 40),
+        full_label:   node.display_label || node.label,
         type:         node.type,
         bg:           style.bg,
         color:        style.color,
@@ -66,7 +66,7 @@ function truncate(str, len) {
   return str.length > len ? str.slice(0, len) + '…' : str
 }
 
-export function useGraph(jobId) {
+export function useGraph(jobId, targetLocale = 'en', fallbackGraph = null) {
   const [graph,    setGraph]    = useState(null)
   const [elements, setElements] = useState([])
   const [loading,  setLoading]  = useState(false)
@@ -77,10 +77,16 @@ export function useGraph(jobId) {
     setLoading(true)
     setError(null)
     try {
-      const resp = await fetch(`${GATEWAY}/graph/${jobId}`)
+      const url  = `${GATEWAY}/graph/${jobId}?locale=${encodeURIComponent(targetLocale)}`
+      const resp = await fetch(url)
       if (!resp.ok) {
         if (resp.status === 404) {
-          setError('Graph not ready yet')
+          if (fallbackGraph) {
+            setGraph(fallbackGraph)
+            setElements(graphToCytoscape(fallbackGraph))
+          } else {
+            setError('Graph not ready yet')
+          }
           return
         }
         throw new Error(`HTTP ${resp.status}`)
@@ -93,9 +99,17 @@ export function useGraph(jobId) {
     } finally {
       setLoading(false)
     }
+  }, [jobId, targetLocale, fallbackGraph])
+
+  // Clear stale graph immediately when jobId changes so old session data doesn't linger
+  // No early-return on null — also clears when active job is removed (jobId → null)
+  useEffect(() => {
+    setGraph(null)
+    setElements([])
+    setError(null)
   }, [jobId])
 
-  // Auto-fetch when jobId changes
+  // Auto-fetch when jobId or locale changes
   useEffect(() => { fetchGraph() }, [fetchGraph])
 
   return { graph, elements, loading, error, refetch: fetchGraph }

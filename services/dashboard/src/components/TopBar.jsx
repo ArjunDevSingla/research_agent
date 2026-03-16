@@ -22,10 +22,10 @@ const LOCALES = [
   { code: 'bn', label: 'বাংলা',       flag: '🇧🇩' },
 ]
 
-export default function TopBar({ jobId, graph, targetLocale, onLocaleChange, theme = "dark", onToggleTheme }) {
+export default function TopBar({ jobId, graph, targetLocale, onLocaleChange, theme = "dark", onToggleTheme, isPipelineRunning = false, onError }) {
   const dk = theme === "dark"
-  const [exporting,    setExporting]    = useState(false)
   const [showLocales,  setShowLocales]  = useState(false)
+  const [showBusyHint, setShowBusyHint] = useState(false)
 
   const nodeCount = graph?.nodes?.length || 0
   const edgeCount = graph?.edges?.length || 0
@@ -33,24 +33,10 @@ export default function TopBar({ jobId, graph, targetLocale, onLocaleChange, the
 
   const currentLocale = LOCALES.find(l => l.code === targetLocale) || LOCALES[0]
 
-  async function handleExport() {
+  function handleExport() {
     if (!jobId) return
-    setExporting(true)
-    try {
-      const resp = await fetch(`${GATEWAY}/export/${jobId}`)
-      if (!resp.ok) throw new Error('Export failed')
-      const blob = await resp.blob()
-      const url  = URL.createObjectURL(blob)
-      const a    = document.createElement('a')
-      a.href     = url
-      a.download = `paperswarm-${jobId}.pdf`
-      a.click()
-      URL.revokeObjectURL(url)
-    } catch (e) {
-      alert('Export failed. Please try again.')
-    } finally {
-      setExporting(false)
-    }
+    const url = `${GATEWAY}/export/${jobId}?locale=${targetLocale}`
+    window.open(url, '_blank', 'noopener,noreferrer')
   }
 
   return (
@@ -88,7 +74,14 @@ export default function TopBar({ jobId, graph, targetLocale, onLocaleChange, the
         {/* Language switcher */}
         <div className="relative">
           <button
-            onClick={() => setShowLocales(v => !v)}
+            onClick={() => {
+              if (isPipelineRunning) {
+                setShowBusyHint(true)
+                setTimeout(() => setShowBusyHint(false), 3000)
+                return
+              }
+              setShowLocales(v => !v)
+            }}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-paper-border
                        rounded-lg bg-white hover:bg-paper transition-colors"
           >
@@ -98,6 +91,19 @@ export default function TopBar({ jobId, graph, targetLocale, onLocaleChange, the
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7"/>
             </svg>
           </button>
+
+          {/* Busy hint — shown while pipeline is running */}
+          {showBusyHint && (
+            <div className={`absolute right-0 top-full mt-1.5 w-64 px-3 py-2.5 rounded-xl
+                             text-xs leading-snug shadow-lg z-50
+                             ${dk ? 'bg-slate-800 border border-white/10 text-slate-300'
+                                  : 'bg-white border border-gray-200 text-gray-600'}`}>
+              <span className={`font-medium ${dk ? 'text-amber-400' : 'text-amber-600'}`}>
+                Analysis in progress.
+              </span>
+              {' '}Language can be changed after the graph is ready.
+            </div>
+          )}
 
           {showLocales && (
             <div className="absolute right-0 top-full mt-1 w-44 bg-white border border-paper-border
@@ -121,25 +127,18 @@ export default function TopBar({ jobId, graph, targetLocale, onLocaleChange, the
           )}
         </div>
 
-        {/* Export PDF */}
+        {/* Export graph report */}
         <button
           onClick={handleExport}
-          disabled={!jobId || exporting}
+          disabled={!jobId}
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium
                      bg-ink text-white rounded-lg hover:bg-ink-light
                      disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
-          {exporting ? (
-            <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-            </svg>
-          ) : (
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-            </svg>
-          )}
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+          </svg>
           Export PDF
         </button>
       </div>

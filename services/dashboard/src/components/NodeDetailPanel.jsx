@@ -151,16 +151,16 @@ export default function NodeDetailPanel({ node, jobId, theme = 'dark' }) {
           </Section>
         )}
 
-        {d.explanation && (
+        {(d.translated_explanation || d.explanation) && (
           <Section label="Why Similar" dk={dk}>
-            <p className={`text-sm leading-relaxed ${dk ? 'text-slate-300' : 'text-gray-700'}`}>{d.explanation}</p>
+            <p className={`text-sm leading-relaxed ${dk ? 'text-slate-300' : 'text-gray-700'}`}>{d.translated_explanation || d.explanation}</p>
           </Section>
         )}
 
-        {d.key_connections?.length > 0 && (
+        {(d.translated_key_connections || d.key_connections)?.length > 0 && (
           <Section label="Key Connections" dk={dk}>
             <ul className="space-y-1">
-              {d.key_connections.map((c, i) => (
+              {(d.translated_key_connections || d.key_connections).map((c, i) => (
                 <li key={i} className="flex gap-2 text-sm">
                   <span className={dk ? 'text-blue-400' : 'text-blue-500'}>›</span>
                   <span className={dk ? 'text-slate-300' : 'text-gray-700'}>{c}</span>
@@ -170,11 +170,11 @@ export default function NodeDetailPanel({ node, jobId, theme = 'dark' }) {
           </Section>
         )}
 
-        {d.abstract && (
+        {(d.translated_abstract || d.abstract) && (
           <Section label="Abstract" dk={dk}>
             <div className={`text-sm leading-relaxed max-h-44 overflow-y-auto pr-1
                               ${dk ? 'text-slate-400' : 'text-gray-600'}`}>
-              {d.abstract}
+              {d.translated_abstract || d.abstract}
             </div>
           </Section>
         )}
@@ -195,22 +195,29 @@ export default function NodeDetailPanel({ node, jobId, theme = 'dark' }) {
                 <ScoreBar value={d.confidence} color="#8b5cf6" dk={dk} />
               </Section>
             )}
-            {d.gap_description && (
+            {(d.translated_gap_description || d.gap_description) && (
               <Section label="Description" dk={dk}>
-                <p className={`text-sm leading-relaxed ${dk ? 'text-slate-300' : 'text-gray-700'}`}>{d.gap_description}</p>
-              </Section>
-            )}
-            {(d.source_paper || d.compared_with) && (
-              <Section label="Identified From" dk={dk}>
-                <p className={`text-sm ${dk ? 'text-purple-300' : 'text-purple-700'}`}>
-                  {d.source_paper || d.compared_with}
+                <p className={`text-sm leading-relaxed ${dk ? 'text-slate-300' : 'text-gray-700'}`}>
+                  {(() => {
+                    const desc = d.translated_gap_description || d.gap_description
+                    if (typeof desc === 'string' && desc.trim().startsWith('['))
+                      try { return JSON.parse(desc).map(g => g.description || g.gap_description || '').join(' • ') } catch {}
+                    return desc
+                  })()}
                 </p>
               </Section>
             )}
-            {d.still_open_aspects?.length > 0 && (
+            {(d.translated_source_paper || d.source_paper || d.compared_with) && (
+              <Section label="Identified From" dk={dk}>
+                <p className={`text-sm ${dk ? 'text-purple-300' : 'text-purple-700'}`}>
+                  {d.translated_source_paper || d.source_paper || d.compared_with}
+                </p>
+              </Section>
+            )}
+            {(d.translated_still_open_aspects || d.still_open_aspects)?.length > 0 && (
               <Section label="Still Open" dk={dk}>
                 <ul className="space-y-1">
-                  {d.still_open_aspects.map((a, i) => (
+                  {(d.translated_still_open_aspects || d.still_open_aspects).map((a, i) => (
                     <li key={i} className="flex gap-2 text-sm">
                       <span className={dk ? 'text-purple-400' : 'text-purple-500'}>›</span>
                       <span className={dk ? 'text-slate-300' : 'text-gray-700'}>{a}</span>
@@ -219,10 +226,10 @@ export default function NodeDetailPanel({ node, jobId, theme = 'dark' }) {
                 </ul>
               </Section>
             )}
-            {d.research_questions?.length > 0 && (
+            {(d.translated_research_questions || d.research_questions)?.length > 0 && (
               <Section label="Research Questions" dk={dk}>
                 <ol className="space-y-1.5">
-                  {d.research_questions.map((q, i) => (
+                  {(d.translated_research_questions || d.research_questions).map((q, i) => (
                     <li key={i} className={`text-sm leading-snug ${dk ? 'text-slate-400' : 'text-gray-600'}`}>
                       {i + 1}. {q}
                     </li>
