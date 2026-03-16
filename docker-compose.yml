@@ -79,6 +79,14 @@ services:
         condition: service_healthy
     restart: on-failure
 
+  pdf-translator:
+    build: ./services/pdf-translator
+    env_file: .env
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: on-failure
+
   dashboard:
     build: ./services/dashboard
     ports:
