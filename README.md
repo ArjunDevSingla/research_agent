@@ -326,6 +326,25 @@ User query / arXiv ID
                     • Broadcast graph_translated event
                     • Dashboard fetches GET /graph/{job_id}
                     • Cytoscape renders the graph
+                         │
+                         ▼
+                    [Dashboard]
+                    • User clicks "Translate PDF"
+                         │
+                         ▼ POST /translate-pdf
+                  [PDF Translator]
+                  • Downloads PDF from arXiv
+                  • Parses pages via PyMuPDF
+                  • Translates page by page (Lingo.dev)
+                  • Streams HTML fragments → Gateway
+                  • Events: pdf_translation_progress
+                            pdf_translation_done
+                         │
+                         ▼
+                    [Gateway WS]
+                    • Streams progress to Dashboard
+                    • Dashboard renders translated HTML
+                    • Export PDF via browser print dialog
 ```
 
 ---
